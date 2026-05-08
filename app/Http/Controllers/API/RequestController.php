@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ServiceRequest;
 use App\Models\StatusLog;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class RequestController extends Controller
 {
@@ -95,12 +96,31 @@ class RequestController extends Controller
     public function destroy(Request $request, $id)
     {
         try {
+            // First, check if request exists at all for this user
             $serviceRequest = ServiceRequest::where('user_id', $request->user()->id)
-                ->where('status', 'pending')
-                ->findOrFail($id);
+                ->find($id);
+            
+            if (!$serviceRequest) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Request not found for this user'
+                ], 404);
+            }
+            
+            // Check if status is pending
+            if ($serviceRequest->status !== 'pending') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Cannot cancel request. Current status: ' . $serviceRequest->status,
+                    'current_status' => $serviceRequest->status
+                ], 400);
+            }
+            
+            // Update status
+            $serviceRequest->status = 'cancelled';
+            $serviceRequest->save();
 
-            $serviceRequest->update(['status' => 'cancelled']);
-
+            // Create status log
             StatusLog::create([
                 'request_id' => $serviceRequest->id,
                 'changed_by' => $request->user()->id,
@@ -109,12 +129,17 @@ class RequestController extends Controller
                 'note' => 'Cancelled by user',
             ]);
 
-            return response()->json(['message' => 'Request cancelled successfully']);
+            return response()->json([
+                'success' => true,
+                'message' => 'Request cancelled successfully',
+                'data' => $serviceRequest
+            ]);
             
         } catch (\Exception $e) {
+            \Log::error('Cancel request error: ' . $e->getMessage());
             return response()->json([
-                'error' => $e->getMessage(),
-                'message' => 'Failed to cancel request'
+                'success' => false,
+                'message' => 'Failed to cancel request: ' . $e->getMessage()
             ], 500);
         }
     }
