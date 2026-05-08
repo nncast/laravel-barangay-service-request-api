@@ -30,17 +30,20 @@ class ServiceRequest extends Model
         'completed_at' => 'datetime',
     ];
 
+    /**
+     * Relationships
+     */
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     public function category()
     {
-        return $this->belongsTo(Category::class);
+        return $this->belongsTo(Category::class, 'category_id');
     }
 
-    public function staff()
+    public function assignedStaff()
     {
         return $this->belongsTo(User::class, 'assigned_to');
     }
@@ -48,5 +51,32 @@ class ServiceRequest extends Model
     public function logs()
     {
         return $this->hasMany(StatusLog::class, 'request_id');
+    }
+
+    public function notifications()
+    {
+        return $this->hasMany(Notification::class, 'request_id');
+    }
+
+    /**
+     * Helper methods
+     */
+    public function canCancel(): bool
+    {
+        return in_array($this->status, ['pending', 'in_review']);
+    }
+
+    public function getStatusColorAttribute(): string
+    {
+        return match($this->status) {
+            'pending' => '#F59E0B',
+            'in_review' => '#3B82F6',
+            'approved' => '#10B981',
+            'processing' => '#8B5CF6',
+            'completed' => '#14B8A6',
+            'rejected' => '#EF4444',
+            'cancelled' => '#6B7280',
+            default => '#6B7280',
+        };
     }
 }

@@ -19,6 +19,14 @@ class StatusLog extends Model
         'note'
     ];
 
+    protected $casts = [
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
+
+    /**
+     * Relationships
+     */
     public function request()
     {
         return $this->belongsTo(ServiceRequest::class, 'request_id');

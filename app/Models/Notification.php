@@ -26,13 +26,35 @@ class Notification extends Model
         'read_at' => 'datetime',
     ];
 
+    /**
+     * Relationships
+     */
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     public function request()
     {
         return $this->belongsTo(ServiceRequest::class, 'request_id');
+    }
+
+    /**
+     * Mark notification as read
+     */
+    public function markAsRead()
+    {
+        $this->update([
+            'is_read' => true,
+            'read_at' => now(),
+        ]);
+    }
+
+    /**
+     * Scope for unread notifications
+     */
+    public function scopeUnread($query)
+    {
+        return $query->where('is_read', false);
     }
 }

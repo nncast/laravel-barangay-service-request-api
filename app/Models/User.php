@@ -3,7 +3,6 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -19,15 +18,12 @@ class User extends Authenticatable
      * @var array<int, string>
      */
     protected $fillable = [
-        'full_name',
-        'name',
+        'name',        // Changed: only 'name' exists in your DB
         'email',
         'password',
         'phone',
         'address',
-        'profile_photo',
         'role',
-        'is_verified',
         'is_active',
     ];
 
@@ -48,14 +44,49 @@ class User extends Authenticatable
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
-        'is_verified' => 'boolean',
         'is_active' => 'boolean',
         'password' => 'hashed',
     ];
 
+    /**
+     * Get user's initials for avatar.
+     */
+    public function getInitialsAttribute(): string
+    {
+        $words = explode(' ', $this->name);
+        $initials = '';
+        foreach ($words as $word) {
+            if (!empty($word)) {
+                $initials .= strtoupper($word[0]);
+            }
+        }
+        return $initials;
+    }
+
+    /**
+     * Check user role.
+     */
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isStaff(): bool
+    {
+        return $this->role === 'staff';
+    }
+
+    public function isResident(): bool
+    {
+        return $this->role === 'resident';
+    }
+
+    /**
+     * Relationships
+     */
     public function requests()
     {
-        return $this->hasMany(ServiceRequest::class);
+        return $this->hasMany(ServiceRequest::class, 'user_id');
     }
 
     public function assignedRequests()
@@ -65,6 +96,11 @@ class User extends Authenticatable
 
     public function notifications()
     {
-        return $this->hasMany(Notification::class);
+        return $this->hasMany(Notification::class, 'user_id');
+    }
+
+    public function statusLogs()
+    {
+        return $this->hasMany(StatusLog::class, 'changed_by');
     }
 }
