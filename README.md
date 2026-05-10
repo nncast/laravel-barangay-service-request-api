@@ -25,8 +25,18 @@ composer install
 ```
 
 ### 4. Setup environment
+**Windows (CMD):**
+```bash
+copy .env.example .env
+```
+
+**Linux / macOS:**
 ```bash
 cp .env.example .env
+```
+
+Generate app key:
+```bash
 php artisan key:generate
 ```
 
