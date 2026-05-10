@@ -25,17 +25,16 @@ composer install
 ```
 
 ### 4. Setup environment
-**Windows (CMD):**
 ```bash
+# Windows (CMD)
 copy .env.example .env
-```
 
-**Linux / macOS:**
-```bash
+# Linux / macOS
 cp .env.example .env
 ```
 
 Generate app key:
+
 ```bash
 php artisan key:generate
 ```
@@ -52,15 +51,27 @@ DB_USERNAME=root
 DB_PASSWORD=
 ```
 
-Create database:
-```bash
-mysql -u root -e "CREATE DATABASE barangay_system"
-```
-
 ### 6. Run migrations and seed
+
 ```bash
 php artisan migrate --seed
 ```
+
+If prompted with:
+
+```bash
+WARN  The database 'barangay_system' does not exist on the 'mysql' connection.
+
+Would you like to create it? (yes/no) [yes]
+```
+
+Type:
+
+```bash
+yes
+```
+
+Then press `Enter`.
 
 ### 7. Start API
 ```bash
@@ -83,5 +94,5 @@ API running at: `http://localhost:8000`
 
 ## Repository
 
-- GitHub: [https://github.com/nncast/barangay-api](https://github.com/nncast/barangay-api)
 - Flutter App: [https://github.com/nncast/barangay_app](https://github.com/nncast/barangay_app)
+- API Backend: [https://github.com/nncast/barangay-api](https://github.com/nncast/barangay-api)
