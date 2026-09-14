@@ -94,5 +94,5 @@ API running at: `http://localhost:8000`
 
 ## Repository
 
-- Flutter App: [https://github.com/nncast/barangay_app](https://github.com/nncast/barangay_app)
-- API Backend: [https://github.com/nncast/barangay-api](https://github.com/nncast/barangay-api)
+- Flutter App: [https://github.com/nncast/flutter-barangay-service-request-app](https://github.com/nncast/flutter-barangay-service-request-app)
+- API Backend: [https://github.com/nncast/laravel-barangay-service-request-api](https://github.com/nncast/laravel-barangay-service-request-api)
