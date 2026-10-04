@@ -12,23 +12,26 @@ class AuthController extends Controller
 {
     public function register(Request $request)
     {
-        $request->validate([
-            'full_name' => 'required|string|max:150',
-            'email' => 'required|email|unique:users',
-            'password' => 'required|min:8|confirmed',
+        // Older app builds sent the name as 'full_name'
+        if (!$request->filled('name') && $request->filled('full_name')) {
+            $request->merge(['name' => $request->input('full_name')]);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:150',
+            'email' => 'required|email|max:255|unique:users,email',
+            'password' => 'required|string|min:8|confirmed',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
         ]);
 
         $user = User::create([
-            'full_name' => $request->full_name,
-            'name' => $request->full_name, // For Laravel's default name field
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'phone' => $request->phone,
-            'address' => $request->address,
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => Hash::make($validated['password']),
+            'phone' => $validated['phone'] ?? null,
+            'address' => $validated['address'] ?? null,
             'role' => 'resident',
-            'is_verified' => true,
             'is_active' => true,
         ]);
 
@@ -53,6 +56,12 @@ class AuthController extends Controller
             throw ValidationException::withMessages([
                 'email' => ['The provided credentials are incorrect.'],
             ]);
+        }
+
+        if (!$user->is_active) {
+            return response()->json([
+                'message' => 'This account has been deactivated. Please contact the barangay office.',
+            ], 403);
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;

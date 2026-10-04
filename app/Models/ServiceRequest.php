@@ -61,9 +61,23 @@ class ServiceRequest extends Model
     /**
      * Helper methods
      */
+    public const STATUSES = ['pending', 'in_review', 'approved', 'processing', 'completed', 'rejected', 'cancelled'];
+
+    /**
+     * Residents can only cancel a request before staff start reviewing it.
+     */
     public function canCancel(): bool
     {
-        return in_array($this->status, ['pending', 'in_review']);
+        return $this->status === 'pending';
+    }
+
+    public static function statusLabel(?string $status): string
+    {
+        return match ($status) {
+            'in_review' => 'In Review',
+            null, '' => 'None',
+            default => ucfirst($status),
+        };
     }
 
     public function getStatusColorAttribute(): string

@@ -6,56 +6,44 @@ use App\Http\Controllers\Controller;
 use App\Models\ServiceRequest;
 use App\Models\StatusLog;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class RequestController extends Controller
 {
     public function index(Request $request)
     {
-        try {
-            $requests = ServiceRequest::with(['category', 'logs'])
-                ->where('user_id', $request->user()->id)
-                ->orderBy('created_at', 'desc')
-                ->get();
-            
-            return response()->json($requests);
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => $e->getMessage(),
-                'message' => 'Failed to fetch requests'
-            ], 500);
-        }
+        $requests = ServiceRequest::with(['category', 'logs.changer'])
+            ->where('user_id', $request->user()->id)
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($requests);
     }
 
     public function store(Request $request)
     {
-        try {
-            $request->validate([
-                'category_id' => 'required|exists:categories,id',
-                'title' => 'required|string|max:255',
-                'description' => 'required|string',
-                'priority' => 'in:low,normal,high,urgent',
-            ]);
+        $validated = $request->validate([
+            'category_id' => [
+                'required',
+                Rule::exists('categories', 'id')->where('is_active', true),
+            ],
+            'title' => 'required|string|max:255',
+            'description' => 'required|string',
+            'priority' => 'nullable|in:low,normal,high,urgent',
+        ]);
 
-            // Generate unique tracking code
-            $trackingCode = 'BSR-' . date('Y') . '-' . str_pad(rand(1, 99999), 5, '0', STR_PAD_LEFT);
-            
-            // Make sure tracking code is unique
-            while (ServiceRequest::where('tracking_code', $trackingCode)->exists()) {
-                $trackingCode = 'BSR-' . date('Y') . '-' . str_pad(rand(1, 99999), 5, '0', STR_PAD_LEFT);
-            }
-
+        $serviceRequest = DB::transaction(function () use ($request, $validated) {
             $serviceRequest = ServiceRequest::create([
-                'tracking_code' => $trackingCode,
+                'tracking_code' => $this->generateTrackingCode(),
                 'user_id' => $request->user()->id,
-                'category_id' => $request->category_id,
-                'title' => $request->title,
-                'description' => $request->description,
-                'priority' => $request->priority ?? 'normal',
+                'category_id' => $validated['category_id'],
+                'title' => $validated['title'],
+                'description' => $validated['description'],
+                'priority' => $validated['priority'] ?? 'normal',
                 'status' => 'pending',
             ]);
 
-            // Create status log
             StatusLog::create([
                 'request_id' => $serviceRequest->id,
                 'changed_by' => $request->user()->id,
@@ -64,83 +52,69 @@ class RequestController extends Controller
                 'note' => 'Request submitted',
             ]);
 
-            // Load relationships
-            $serviceRequest->load(['category', 'logs']);
-            
-            return response()->json($serviceRequest, 201);
-            
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => $e->getMessage(),
-                'message' => 'Failed to create request'
-            ], 500);
-        }
+            return $serviceRequest;
+        });
+
+        return response()->json($serviceRequest->load(['category', 'logs.changer']), 201);
     }
 
     public function show(Request $request, $id)
     {
-        try {
-            $serviceRequest = ServiceRequest::with(['category', 'logs.changer'])
-                ->where('user_id', $request->user()->id)
-                ->findOrFail($id);
-            
-            return response()->json($serviceRequest);
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => $e->getMessage(),
-                'message' => 'Request not found'
-            ], 404);
+        $serviceRequest = ServiceRequest::with(['category', 'logs.changer'])
+            ->where('user_id', $request->user()->id)
+            ->find($id);
+
+        if (!$serviceRequest) {
+            return response()->json(['message' => 'Request not found'], 404);
         }
+
+        return response()->json($serviceRequest);
     }
 
     public function destroy(Request $request, $id)
     {
-        try {
-            // First, check if request exists at all for this user
-            $serviceRequest = ServiceRequest::where('user_id', $request->user()->id)
-                ->find($id);
-            
-            if (!$serviceRequest) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Request not found for this user'
-                ], 404);
-            }
-            
-            // Check if status is pending
-            if ($serviceRequest->status !== 'pending') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Cannot cancel request. Current status: ' . $serviceRequest->status,
-                    'current_status' => $serviceRequest->status
-                ], 400);
-            }
-            
-            // Update status
-            $serviceRequest->status = 'cancelled';
-            $serviceRequest->save();
+        $serviceRequest = ServiceRequest::where('user_id', $request->user()->id)->find($id);
 
-            // Create status log
+        if (!$serviceRequest) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Request not found'
+            ], 404);
+        }
+
+        if (!$serviceRequest->canCancel()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only pending requests can be cancelled.',
+                'current_status' => $serviceRequest->status
+            ], 422);
+        }
+
+        DB::transaction(function () use ($request, $serviceRequest) {
+            $serviceRequest->update(['status' => 'cancelled']);
+
             StatusLog::create([
                 'request_id' => $serviceRequest->id,
                 'changed_by' => $request->user()->id,
                 'old_status' => 'pending',
                 'new_status' => 'cancelled',
-                'note' => 'Cancelled by user',
+                'note' => 'Cancelled by resident',
             ]);
+        });
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Request cancelled successfully',
-                'data' => $serviceRequest
-            ]);
-            
-        } catch (\Exception $e) {
-            \Log::error('Cancel request error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to cancel request: ' . $e->getMessage()
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Request cancelled successfully',
+            'data' => $serviceRequest
+        ]);
+    }
+
+    private function generateTrackingCode(): string
+    {
+        do {
+            $code = 'BSR-' . date('Y') . '-' . str_pad((string) random_int(1, 99999), 5, '0', STR_PAD_LEFT);
+        } while (ServiceRequest::where('tracking_code', $code)->exists());
+
+        return $code;
     }
 }

@@ -7,12 +7,15 @@ use App\Models\ServiceRequest;
 use App\Models\StatusLog;
 use App\Models\Notification;
 use App\Models\User;
-use App\Models\Category;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 
+/**
+ * Routes are guarded by the role middleware in routes/api.php:
+ * request management and the user list are open to staff and admins,
+ * creating, editing and deleting users is admin only.
+ */
 class AdminController extends Controller
 {
     /**
@@ -20,23 +23,11 @@ class AdminController extends Controller
      */
     public function allRequests(Request $request)
     {
-        try {
-            $user = $request->user();
-            $query = ServiceRequest::with(['user', 'category', 'logs.changer']);
-            
-            // Staff can see all requests, admin sees all
-            $requests = $query->orderBy('created_at', 'desc')->get();
-            
-            // Return as JSON array directly
-            return response()->json($requests);
-            
-        } catch (\Exception $e) {
-            Log::error('All requests error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch requests'
-            ], 500);
-        }
+        $requests = ServiceRequest::with(['user', 'category', 'logs.changer'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($requests);
     }
 
     /**
@@ -44,63 +35,74 @@ class AdminController extends Controller
      */
     public function updateStatus(Request $request, $id)
     {
-        try {
-            $request->validate([
-                'status' => 'required|in:pending,in_review,approved,processing,completed,rejected',
-                'remarks' => 'nullable|string',
-            ]);
+        $validated = $request->validate([
+            'status' => 'required|in:pending,in_review,approved,processing,completed,rejected',
+            'remarks' => 'nullable|string|max:1000',
+        ]);
 
-            $serviceRequest = ServiceRequest::findOrFail($id);
-            $oldStatus = $serviceRequest->status;
-            $newStatus = $request->status;
+        $serviceRequest = ServiceRequest::find($id);
 
-            // Update the request
+        if (!$serviceRequest) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Request not found'
+            ], 404);
+        }
+
+        if ($serviceRequest->status === 'cancelled') {
+            return response()->json([
+                'success' => false,
+                'message' => 'This request was cancelled by the resident and can no longer be updated.'
+            ], 422);
+        }
+
+        $oldStatus = $serviceRequest->status;
+        $newStatus = $validated['status'];
+        $remarks = $validated['remarks'] ?? null;
+
+        if ($oldStatus === $newStatus && $remarks === $serviceRequest->remarks) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Nothing to update. Choose a different status or change the remarks.'
+            ], 422);
+        }
+
+        DB::transaction(function () use ($request, $serviceRequest, $oldStatus, $newStatus, $remarks) {
             $serviceRequest->status = $newStatus;
-            if ($request->remarks) {
-                $serviceRequest->remarks = $request->remarks;
-            }
-            if ($newStatus === 'completed') {
-                $serviceRequest->completed_at = now();
-            }
+            $serviceRequest->remarks = $remarks;
+            $serviceRequest->completed_at = $newStatus === 'completed'
+                ? ($serviceRequest->completed_at ?? now())
+                : null;
             $serviceRequest->save();
 
-            // Create status log
             StatusLog::create([
                 'request_id' => $serviceRequest->id,
                 'changed_by' => $request->user()->id,
                 'old_status' => $oldStatus,
                 'new_status' => $newStatus,
-                'note' => $request->remarks,
+                'note' => $remarks,
             ]);
 
-            // Create notification for the user
+            $body = $oldStatus === $newStatus
+                ? "Staff added remarks to your request #{$serviceRequest->tracking_code}."
+                : "Your request #{$serviceRequest->tracking_code} changed from "
+                    . ServiceRequest::statusLabel($oldStatus) . ' to ' . ServiceRequest::statusLabel($newStatus) . '.';
+
             Notification::create([
                 'user_id' => $serviceRequest->user_id,
                 'request_id' => $serviceRequest->id,
                 'type' => 'status_update',
                 'title' => 'Request Status Updated',
-                'body' => "Your request #{$serviceRequest->tracking_code} status changed from " . ucfirst($oldStatus) . " to " . ucfirst($newStatus),
+                'body' => $body,
                 'is_read' => false,
             ]);
+        });
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Status updated successfully',
-                'data' => $serviceRequest->load(['user', 'category', 'logs'])
-            ]);
-
-        } catch (ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Request not found'
-            ], 404);
-        } catch (\Exception $e) {
-            Log::error('Update status error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update status'
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'Status updated successfully',
+            'data' => $serviceRequest->load(['user', 'category', 'logs.changer'])
+        ]);
     }
 
     /**
@@ -108,97 +110,35 @@ class AdminController extends Controller
      */
     public function dashboard(Request $request)
     {
-        try {
-            $today = now()->startOfDay();
-            
-            $stats = [
-                'total' => ServiceRequest::count(),
-                'pending' => ServiceRequest::where('status', 'pending')->count(),
-                'in_review' => ServiceRequest::where('status', 'in_review')->count(),
-                'approved' => ServiceRequest::where('status', 'approved')->count(),
-                'processing' => ServiceRequest::where('status', 'processing')->count(),
-                'completed' => ServiceRequest::where('status', 'completed')->count(),
-                'rejected' => ServiceRequest::where('status', 'rejected')->count(),
-                'today' => ServiceRequest::whereDate('created_at', $today)->count(),
-                'this_week' => ServiceRequest::whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()])->count(),
-                'this_month' => ServiceRequest::whereMonth('created_at', now()->month)->count(),
-            ];
+        $byStatus = ServiceRequest::select('status', DB::raw('COUNT(*) as total'))
+            ->groupBy('status')
+            ->pluck('total', 'status');
 
-            return response()->json($stats);
-
-        } catch (\Exception $e) {
-            Log::error('Dashboard error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch dashboard data'
-            ], 500);
+        $stats = ['total' => ServiceRequest::count()];
+        foreach (ServiceRequest::STATUSES as $status) {
+            $stats[$status] = (int) ($byStatus[$status] ?? 0);
         }
+
+        $stats['today'] = ServiceRequest::whereBetween('created_at', [now()->startOfDay(), now()->endOfDay()])->count();
+        $stats['this_week'] = ServiceRequest::whereBetween('created_at', [now()->startOfWeek(), now()->endOfWeek()])->count();
+        $stats['this_month'] = ServiceRequest::whereBetween('created_at', [now()->startOfMonth(), now()->endOfMonth()])->count();
+
+        return response()->json($stats);
     }
 
     /**
-     * Get all active users (Admin and Staff can view)
-     * Fixed: Only returns active users (not deactivated)
+     * List users. Admins see every account (including deactivated ones,
+     * so they can be reactivated); staff only see active accounts.
      */
     public function getUsers(Request $request)
     {
-        try {
-            // FIXED: Only get users that are active (not deactivated)
-            $users = User::where('is_active', true)
-                ->orderBy('created_at', 'desc')
-                ->get();
-            
-            // Remove sensitive data for non-admin users
-            if ($request->user()->role !== 'admin') {
-                $users = $users->map(function ($user) {
-                    return [
-                        'id' => $user->id,
-                        'name' => $user->name,
-                        'email' => $user->email,
-                        'phone' => $user->phone,
-                        'address' => $user->address,
-                        'role' => $user->role,
-                        'is_active' => $user->is_active,
-                        'created_at' => $user->created_at,
-                    ];
-                });
-            }
-            
-            return response()->json($users);
-        } catch (\Exception $e) {
-            Log::error('Get users error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch users: ' . $e->getMessage()
-            ], 500);
-        }
-    }
+        $query = User::orderBy('created_at', 'desc');
 
-    /**
-     * Get all users including deactivated (Admin only)
-     */
-    public function getAllUsers(Request $request)
-    {
-        try {
-            // Verify admin access
-            if ($request->user()->role !== 'admin') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied. Admin privileges required.'
-                ], 403);
-            }
-
-            $users = User::withTrashed()
-                ->orderBy('created_at', 'desc')
-                ->get();
-            
-            return response()->json($users);
-        } catch (\Exception $e) {
-            Log::error('Get all users error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch users'
-            ], 500);
+        if ($request->user()->role !== 'admin') {
+            $query->where('is_active', true);
         }
+
+        return response()->json($query->get());
     }
 
     /**
@@ -206,55 +146,30 @@ class AdminController extends Controller
      */
     public function createUser(Request $request)
     {
-        try {
-            // Verify admin access
-            if ($request->user()->role !== 'admin') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied. Admin privileges required.'
-                ], 403);
-            }
+        $validated = $request->validate([
+            'name' => 'required|string|max:150',
+            'email' => 'required|email|max:255|unique:users,email',
+            'password' => 'required|string|min:8|confirmed',
+            'phone' => 'nullable|string|max:20',
+            'address' => 'nullable|string',
+            'role' => 'required|in:resident,staff,admin',
+        ]);
 
-            $validated = $request->validate([
-                'name' => 'required|string|max:150',
-                'email' => 'required|email|unique:users,email',
-                'password' => 'required|min:6|confirmed',
-                'phone' => 'nullable|string|max:20',
-                'address' => 'nullable|string',
-                'role' => 'required|in:resident,staff,admin',
-            ]);
+        $user = User::create([
+            'name' => $validated['name'],
+            'email' => $validated['email'],
+            'password' => Hash::make($validated['password']),
+            'phone' => $validated['phone'] ?? null,
+            'address' => $validated['address'] ?? null,
+            'role' => $validated['role'],
+            'is_active' => true,
+        ]);
 
-            $user = User::create([
-                'name' => $validated['name'],
-                'email' => $validated['email'],
-                'password' => Hash::make($validated['password']),
-                'phone' => $validated['phone'] ?? null,
-                'address' => $validated['address'] ?? null,
-                'role' => $validated['role'],
-                'is_active' => true,
-            ]);
-
-            $user->makeHidden(['password']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'User created successfully',
-                'data' => $user
-            ], 201);
-
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $e->errors()
-            ], 422);
-        } catch (\Exception $e) {
-            Log::error('Create user error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create user: ' . $e->getMessage()
-            ], 500);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'User created successfully',
+            'data' => $user
+        ], 201);
     }
 
     /**
@@ -262,154 +177,86 @@ class AdminController extends Controller
      */
     public function updateUser(Request $request, $id)
     {
-        try {
-            // Verify admin access
-            if ($request->user()->role !== 'admin') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied. Admin privileges required.'
-                ], 403);
-            }
+        $user = User::find($id);
 
-            $user = User::findOrFail($id);
-
-            // Prevent updating your own role to something lower
-            if ($user->id === $request->user()->id && $request->has('role') && $request->role !== 'admin') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You cannot change your own admin role.'
-                ], 403);
-            }
-
-            $validated = $request->validate([
-                'name' => 'sometimes|string|max:150',
-                'phone' => 'nullable|string|max:20',
-                'address' => 'nullable|string',
-                'role' => 'sometimes|in:resident,staff,admin',
-                'is_active' => 'sometimes|boolean',
-            ]);
-
-            $updates = [];
-            if (isset($validated['name'])) $updates['name'] = $validated['name'];
-            if (isset($validated['phone'])) $updates['phone'] = $validated['phone'];
-            if (isset($validated['address'])) $updates['address'] = $validated['address'];
-            if (isset($validated['role'])) $updates['role'] = $validated['role'];
-            if (isset($validated['is_active'])) $updates['is_active'] = $validated['is_active'];
-            
-            $user->update($updates);
-
-            $user->makeHidden(['password']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'User updated successfully',
-                'data' => $user
-            ]);
-
-        } catch (ModelNotFoundException $e) {
+        if (!$user) {
             return response()->json([
                 'success' => false,
                 'message' => 'User not found'
             ], 404);
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $e->errors()
-            ], 422);
-        } catch (\Exception $e) {
-            Log::error('Update user error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to update user: ' . $e->getMessage()
-            ], 500);
         }
+
+        $validated = $request->validate([
+            'name' => 'sometimes|required|string|max:150',
+            'phone' => 'sometimes|nullable|string|max:20',
+            'address' => 'sometimes|nullable|string',
+            'role' => 'sometimes|required|in:resident,staff,admin',
+            'is_active' => 'sometimes|required|boolean',
+        ]);
+
+        $isSelf = $user->id === $request->user()->id;
+
+        if ($isSelf && isset($validated['role']) && $validated['role'] !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'You cannot change your own admin role.'
+            ], 403);
+        }
+
+        if ($isSelf && array_key_exists('is_active', $validated) && !$validated['is_active']) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You cannot deactivate your own account.'
+            ], 403);
+        }
+
+        $user->update($validated);
+
+        // A deactivated account is signed out everywhere
+        if ($user->wasChanged('is_active') && !$user->is_active) {
+            $user->tokens()->delete();
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'User updated successfully',
+            'data' => $user
+        ]);
     }
 
     /**
-     * Delete a user (Admin only) - HARD DELETE
-     * This permanently removes the user from the database
+     * Permanently delete a user (Admin only), along with their own requests
+     * and notifications. Status history they wrote on other residents'
+     * requests is kept, with the author cleared.
      */
     public function deleteUser(Request $request, $id)
     {
-        try {
-            // Verify admin access
-            if ($request->user()->role !== 'admin') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied. Admin privileges required.'
-                ], 403);
-            }
+        $user = User::find($id);
 
-            $user = User::findOrFail($id);
-
-            // Prevent deleting your own account
-            if ($user->id === $request->user()->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You cannot delete your own account.'
-                ], 403);
-            }
-
-            $userName = $user->name;
-
-            // FIXED: HARD DELETE - permanently remove from database
-            // This will cascade delete all related requests, notifications, and logs
-            $user->forceDelete();
-
-            return response()->json([
-                'success' => true,
-                'message' => "User '$userName' has been permanently deleted"
-            ]);
-
-        } catch (ModelNotFoundException $e) {
+        if (!$user) {
             return response()->json([
                 'success' => false,
                 'message' => 'User not found'
             ], 404);
-        } catch (\Exception $e) {
-            Log::error('Delete user error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to delete user: ' . $e->getMessage()
-            ], 500);
         }
-    }
 
-    /**
-     * Reactivate a deactivated user (Admin only)
-     */
-    public function reactivateUser(Request $request, $id)
-    {
-        try {
-            // Verify admin access
-            if ($request->user()->role !== 'admin') {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied. Admin privileges required.'
-                ], 403);
-            }
-
-            $user = User::findOrFail($id);
-            
-            $user->update(['is_active' => true]);
-
-            return response()->json([
-                'success' => true,
-                'message' => "User '{$user->name}' has been reactivated"
-            ]);
-
-        } catch (ModelNotFoundException $e) {
+        if ($user->id === $request->user()->id) {
             return response()->json([
                 'success' => false,
-                'message' => 'User not found'
-            ], 404);
-        } catch (\Exception $e) {
-            Log::error('Reactivate user error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to reactivate user'
-            ], 500);
+                'message' => 'You cannot delete your own account.'
+            ], 403);
         }
+
+        $userName = $user->name;
+
+        DB::transaction(function () use ($user) {
+            $user->tokens()->delete();
+            $user->delete();
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => "User '$userName' has been permanently deleted"
+        ]);
     }
 }
