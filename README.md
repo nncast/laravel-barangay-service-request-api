@@ -15,8 +15,8 @@ The Barangay Service System API is a RESTful backend service for managing barang
 ### 2. Clone to Laragon www folder
 ```bash
 cd C:\laragon\www
-git clone https://github.com/nncast/barangay-api.git
-cd barangay-api
+git clone https://github.com/nncast/laravel-barangay-service-request-api.git
+cd laravel-barangay-service-request-api
 ```
 
 ### 3. Install dependencies
@@ -91,6 +91,14 @@ API running at: `http://localhost:8000`
 | Resident | maria@example.com | User1234 |
 
 ---
+
+## Contributing
+
+Contributions are welcome. Fork the repository, work on a branch from `main`, and open a pull request describing what changed and why. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and code style.
+
+## Security
+
+Please don't report vulnerabilities in public issues. Use the repository's **Security → Report a vulnerability** tab instead. See [SECURITY.md](SECURITY.md) for details.
 
 ## Repository
 
