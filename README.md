@@ -19,12 +19,6 @@
 
 The **Barangay Service System API** is the REST backend for the [Barangay Service System mobile app](https://github.com/nncast/flutter-barangay-service-request-app). It handles sign-in, service requests and their status history, notifications to residents, dashboard statistics, and user management for residents, staff and administrators.
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/nncast/flutter-barangay-service-request-app/main/docs/screenshots/request-detail.png" width="200" alt="Resident view of a request">
-  <img src="https://raw.githubusercontent.com/nncast/flutter-barangay-service-request-app/main/docs/screenshots/admin-dashboard.png" width="200" alt="Staff dashboard">
-  <img src="https://raw.githubusercontent.com/nncast/flutter-barangay-service-request-app/main/docs/screenshots/admin-request-details.png" width="200" alt="Request details for staff">
-</p>
-<p align="center"><sub>The mobile app running against this API. More screenshots are in the <a href="https://github.com/nncast/flutter-barangay-service-request-app#screenshots">app's README</a>.</sub></p>
 
 ## How a request flows
 
