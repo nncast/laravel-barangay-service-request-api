@@ -4,14 +4,12 @@
 
 ## Development Team
 
-| Name | GitHub |
-|---|---|
-| Bernabe, K.S. | |
-| Castillo, J.A.F. | [nncast](https://github.com/nncast) |
-| Cauilan, C.A.T. | |
-| Espinocilla, E.S. Jr. | |
-| Gacrama, A.I.M. | |
-| Liquete, J.P.R. | |
+- Kimberly S. Bernabe | [Kimbernabe](https://github.com/Kimbernabe)
+- Janelle Ann F. Castillo | [nncast](https://github.com/nncast)
+- Chris Angelo T. Cauilan
+- Edgardo S. Espinocilla, Jr.
+- Anselm Immanuel M. Gacrama
+- James Patrick R. Liquete
 
 The same team built the [mobile app](https://github.com/nncast/flutter-barangay-service-request-app).
 
