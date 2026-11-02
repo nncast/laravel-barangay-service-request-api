@@ -49,25 +49,24 @@ class AdminController extends Controller
             ], 404);
         }
 
-        if ($serviceRequest->status === 'cancelled') {
-            return response()->json([
-                'success' => false,
-                'message' => 'This request was cancelled by the resident and can no longer be updated.'
-            ], 422);
-        }
-
-        $oldStatus = $serviceRequest->status;
         $newStatus = $validated['status'];
         $remarks = $validated['remarks'] ?? null;
 
-        if ($oldStatus === $newStatus && $remarks === $serviceRequest->remarks) {
+        if ($serviceRequest->status === $newStatus && $remarks === $serviceRequest->remarks) {
             return response()->json([
                 'success' => false,
                 'message' => 'Nothing to update. Choose a different status or change the remarks.'
             ], 422);
         }
 
-        DB::transaction(function () use ($request, $serviceRequest, $oldStatus, $newStatus, $remarks) {
+        $cancelled = DB::transaction(function () use ($request, $serviceRequest, $newStatus, $remarks) {
+            // Read the status under a row lock, so a resident cancelling at the same moment
+            // can't be overwritten and the log records the status this change really replaces.
+            $oldStatus = ServiceRequest::whereKey($serviceRequest->id)->lockForUpdate()->value('status');
+            if ($oldStatus === 'cancelled') {
+                return true;
+            }
+
             $serviceRequest->status = $newStatus;
             $serviceRequest->remarks = $remarks;
             $serviceRequest->completed_at = $newStatus === 'completed'
@@ -96,7 +95,16 @@ class AdminController extends Controller
                 'body' => $body,
                 'is_read' => false,
             ]);
+
+            return false;
         });
+
+        if ($cancelled) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This request was cancelled by the resident and can no longer be updated.'
+            ], 422);
+        }
 
         return response()->json([
             'success' => true,
