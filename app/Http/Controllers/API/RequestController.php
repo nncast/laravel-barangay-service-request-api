@@ -82,15 +82,13 @@ class RequestController extends Controller
             ], 404);
         }
 
-        if (!$serviceRequest->canCancel()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Only pending requests can be cancelled.',
-                'current_status' => $serviceRequest->status
-            ], 422);
-        }
+        $cancelled = DB::transaction(function () use ($request, $serviceRequest) {
+            // Re-check under a row lock: staff may have moved the request on since it was read.
+            $serviceRequest->status = ServiceRequest::whereKey($serviceRequest->id)->lockForUpdate()->value('status');
+            if (!$serviceRequest->canCancel()) {
+                return false;
+            }
 
-        DB::transaction(function () use ($request, $serviceRequest) {
             $serviceRequest->update(['status' => 'cancelled']);
 
             StatusLog::create([
@@ -100,7 +98,17 @@ class RequestController extends Controller
                 'new_status' => 'cancelled',
                 'note' => 'Cancelled by resident',
             ]);
+
+            return true;
         });
+
+        if (!$cancelled) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only pending requests can be cancelled.',
+                'current_status' => $serviceRequest->status
+            ], 422);
+        }
 
         return response()->json([
             'success' => true,
