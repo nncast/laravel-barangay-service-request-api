@@ -16,6 +16,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         // The mobile app authenticates with Sanctum bearer tokens, so the
         // cookie/CSRF (SPA) middleware is deliberately not enabled here.
+        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+
         $middleware->alias([
             'role' => RoleMiddleware::class,
         ]);
